@@ -1,0 +1,52 @@
+- name: Configure EC2 and run the demo app
+  hosts: app
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait until the server accepts SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Install Docker
+      ansible.builtin.dnf:
+        name: docker
+        state: present
+
+    - name: Start and enable Docker
+      ansible.builtin.systemd_service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Create the Compose plugin directory
+      ansible.builtin.file:
+        path: /usr/local/lib/docker/cli-plugins
+        state: directory
+        mode: "0755"
+
+    - name: Install the Docker Compose plugin
+      ansible.builtin.get_url:
+        url: https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64
+        dest: /usr/local/lib/docker/cli-plugins/docker-compose
+        mode: "0755"
+
+    - name: Create the app directory
+      ansible.builtin.file:
+        path: /home/ec2-user/app
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+
+    - name: Copy the compose file
+      ansible.builtin.copy:
+        src: compose.yaml
+        dest: /home/ec2-user/app/compose.yaml
+        owner: ec2-user
+        group: ec2-user
+
+    - name: Start the app
+      community.docker.docker_compose_v2:
+        project_src: /home/ec2-user/app
+        state: present
+        pull: always

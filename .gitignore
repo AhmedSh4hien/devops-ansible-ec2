@@ -1,0 +1,6 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+ec2_ip.txt
+inventory.ini
