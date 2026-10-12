@@ -1,0 +1,53 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'ACTION',
+            choices: ['deploy', 'destroy'],
+            description: 'deploy: create EC2 with Terraform and configure it with Ansible. destroy: tear it down.'
+        )
+    }
+
+    stages {
+        stage('Provision (Terraform)') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY'),
+                    file(credentialsId: 'ec2-public-key', variable: 'PUBKEY_FILE')
+                ]) {
+                    dir('terraform/ec2') {
+                        sh '''
+                            MY_IP=$(curl -s https://checkip.amazonaws.com | tr -d '[:space:]')
+                            terraform init -input=false
+                            if [ "$ACTION" = "destroy" ]; then
+                                terraform destroy -auto-approve -input=false \
+                                    -var="my_ip_cidr=$MY_IP/32" -var="public_key_path=$PUBKEY_FILE"
+                            else
+                                terraform apply -auto-approve -input=false \
+                                    -var="my_ip_cidr=$MY_IP/32" -var="public_key_path=$PUBKEY_FILE"
+                                terraform output -raw instance_public_ip > "$WORKSPACE/ec2_ip.txt"
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Configure (Ansible)') {
+            when { expression { params.ACTION == 'deploy' } }
+            steps {
+                sshagent(credentials: ['ec2-ssh-key']) {
+                    sh '''
+                        EC2_HOST=$(cat ec2_ip.txt)
+                        echo "[app]" > ansible/inventory.ini
+                        echo "$EC2_HOST ansible_user=ec2-user ansible_ssh_common_args='-o StrictHostKeyChecking=accept-new'" >> ansible/inventory.ini
+                        ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
+                        echo "App is live at http://$EC2_HOST:8080"
+                    '''
+                }
+            }
+        }
+    }
+}
